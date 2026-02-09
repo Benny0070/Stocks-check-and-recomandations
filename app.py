@@ -167,24 +167,24 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
 
     return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-# --- SIDEBAR (FIXAT PENTRU ENTER) ---
+# --- 3. SIDEBAR (LOGICA NOUĂ DE CĂUTARE) ---
 st.sidebar.header("🔍 Control Panel")
 
-# Funcția care se execută STRICT la Enter
-def update_ticker_on_enter():
-    st.session_state.active_ticker = st.session_state.widget_search_input.upper()
+# Funcția Callback: Se execută DOAR la Enter
+def change_ticker():
+    # Actualizează variabila principală cu ce a scris utilizatorul
+    st.session_state.active_ticker = st.session_state.ticker_input.upper()
 
-# Input-ul cu Callback (on_change)
+# Widget-ul de input legat de funcția de mai sus
 st.sidebar.text_input(
-    "Caută Companie (Enter)",
+    "Caută Companie (Scrie + Enter)", 
     value=st.session_state.active_ticker,
-    key="widget_search_input", # Cheie unică pentru acest widget
-    on_change=update_ticker_on_enter # Asta face magia
+    key="ticker_input",
+    on_change=change_ticker # Cheia succesului: declanșează funcția instant
 )
 
 # Buton de Favorite
 if st.sidebar.button("➕ Adaugă la Favorite"):
-    # Folosim direct active_ticker care e deja actualizat
     curr = st.session_state.active_ticker
     if curr not in st.session_state.favorites:
         try:
@@ -214,7 +214,7 @@ if st.session_state.favorites:
 else:
     st.sidebar.info("Nicio companie salvată.")
 
-# --- MAIN APP ---
+# --- 4. MAIN APP ---
 temp_stock = yf.Ticker(st.session_state.active_ticker)
 try:
     temp_name = temp_stock.info.get('longName', st.session_state.active_ticker)
