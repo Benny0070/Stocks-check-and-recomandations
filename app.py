@@ -2,32 +2,23 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from datetime import datetime
 from fpdf import FPDF
 import base64
 
 # --- 1. CONFIGURARE PAGINĂ ---
 st.set_page_config(page_title="PRIME Terminal", page_icon="🛡️", layout="wide")
 
-# --- CSS PERSONALIZAT ---
+# --- CSS CA SA ARATE BINE FORMULARUL ---
 st.markdown("""
     <style>
     .main { background-color: #0e1117; color: #ffffff; }
-    div[data-testid="stMetricValue"] { background-color: transparent !important; }
-    div[data-testid="stMetricLabel"] { background-color: transparent !important; }
-    .stMetric { background-color: transparent !important; border: none !important; }
-    
-    /* CSS PENTRU ALINIERE PERFECTA BUTON CU INPUT */
-    div[data-testid="stHorizontalBlock"] {
-        align-items: center;
-    }
-    div[data-testid="stHorizontalBlock"] > div:nth-child(2) button {
-        border-radius: 5px;
-        border: 1px solid #4CAF50; /* Bordura verde sa se vada butonul */
-        height: 100%;
-        padding-top: 0px;
-        padding-bottom: 0px;
-        min-height: 42px; /* Inaltimea standard a inputului */
+    /* Facem butonul din formular verde și vizibil */
+    div[data-testid="stForm"] button {
+        background-color: #00cc00 !important;
+        color: black !important;
+        font-weight: bold !important;
+        border: none !important;
+        width: 100%;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -40,15 +31,7 @@ if 'favorite_names' not in st.session_state:
 if 'active_ticker' not in st.session_state:
     st.session_state.active_ticker = "NVDA"
 
-# --- FUNCȚIE SEARCH (CALLBACK) ---
-def execute_search():
-    # Luam valoarea din inputul "search_term"
-    val = st.session_state.search_term
-    if val:
-        st.session_state.active_ticker = val.upper()
-        # Nu stergem textul ca sa vezi ce ai cautat, dar poti decomenta linia de jos:
-        # st.session_state.search_term = "" 
-
+# --- FUNCȚII UTILITARE ---
 def clean_text_for_pdf(text):
     text = str(text)
     text = text.replace("🔴", "[ROSU]").replace("🟢", "[VERDE]").replace("🟡", "[GALBEN]").replace("⚪", "[NEUTRU]")
@@ -149,24 +132,33 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
         pdf.cell(0, 8, f"- {clean_text_for_pdf(r)}", ln=True)
     return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-# --- SIDEBAR (DESIGN: SEARCH BAR + BUTON) ---
+# --- SIDEBAR (DESIGN: FORMULAR) ---
 st.sidebar.title(f"🔍 {st.session_state.active_ticker}")
-st.sidebar.caption("Căutare Rapidă")
 
-# AICI E CHEIA: COLOANE (70% text, 30% buton)
-col_input, col_btn = st.sidebar.columns([0.7, 0.3])
+st.sidebar.write("Căutare Nouă:")
 
-with col_input:
-    # label_visibility="collapsed" ascunde eticheta ca sa nu ocupe spatiu
-    st.text_input("Simbol", key="search_term", placeholder="TSLA", label_visibility="collapsed")
+# --- AICI ESTE SCHIMBAREA: FOLOSIM UN FORMULAR ---
+# Formularul creează o cutie vizuală. Butonul e legat direct de ea.
+with st.sidebar.form(key='search_form'):
+    # Facem coloane INAUNTRU la formular
+    c_in, c_btn = st.columns([0.7, 0.3])
+    
+    with c_in:
+        # Input simplu
+        search_val = st.text_input("Simbol", placeholder="TSLA", label_visibility="collapsed")
+    
+    with c_btn:
+        # Butonul de submit al formularului
+        submit_button = st.form_submit_button(label='GO')
 
-with col_btn:
-    # Butonul executa cautarea cand e apasat
-    st.button("Go", on_click=execute_search, type="primary")
+    # Daca s-a apasat butonul GO (sau enter in formular)
+    if submit_button and search_val:
+        st.session_state.active_ticker = search_val.upper()
+        st.rerun()
 
 st.sidebar.markdown("---")
 
-# Buton Favorite
+# Buton Favorite (în afara formularului)
 if st.sidebar.button("➕ Salvează la Favorite"):
     ticker_to_add = st.session_state.active_ticker
     if ticker_to_add not in st.session_state.favorites:
@@ -176,6 +168,7 @@ if st.sidebar.button("➕ Salvează la Favorite"):
             st.session_state.favorites.append(ticker_to_add)
             st.session_state.favorite_names[ticker_to_add] = long_name
             st.sidebar.success("Adăugat!")
+            st.rerun()
         except:
             st.sidebar.error("Eroare!")
 
@@ -185,7 +178,7 @@ if st.session_state.favorites:
         full_n = st.session_state.favorite_names.get(fav, fav)
         
         c1, c2 = st.sidebar.columns([4, 1])
-        # Callback-uri pentru lista de favorite
+        # Callback-uri simple
         def set_fav(f=fav): st.session_state.active_ticker = f
         def del_fav(f=fav): st.session_state.favorites.remove(f)
 
