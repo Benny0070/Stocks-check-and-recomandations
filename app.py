@@ -37,13 +37,21 @@ def update_search():
         st.session_state.active_ticker = val.upper()
         st.session_state.search_input = "" # Golim căsuța după enter
 
-# --- ÎNLOCUIEȘTE LINIA VECHE DE INPUT CU ASTA ---
-st.sidebar.text_input(
-    "Caută Simbol și dă ENTER:",
-    key="search_input",        # Cheia asta leagă inputul de funcția de sus
-    on_change=update_search,   # Asta activează funcția când apeși ENTER
-    placeholder="ex: PLTR"
-)
+# --- COD NOU PENTRU SIDEBAR (INLOCUIESTE INPUTUL VECHI) ---
+
+# Folosim un formular. Asta captureaza tasta ENTER automat.
+with st.sidebar.form(key='search_form'):
+    # Casuta de text
+    new_ticker = st.text_input("Scrie simbolul (ex: TSLA):")
+    
+    # Butonul de submit (se apasa singur cand dai Enter in casuta)
+    # E important sa existe, chiar daca userul da doar Enter.
+    submit_button = st.form_submit_button("🔍 Caută")
+
+    # Logica: Daca s-a dat click sau Enter
+    if submit_button and new_ticker:
+        st.session_state.active_ticker = new_ticker.upper()
+        st.rerun() # <--- ASTA E CHEIA: FORȚEAZĂ PAGINA SĂ SE ACTUALIZEZE INSTANT
 
 # --- 2. FUNCȚII UTILITARE ---
 
