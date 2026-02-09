@@ -8,44 +8,40 @@ from datetime import datetime
 import json
 import os
 
-# --- 1. CONFIGURARE PAGINĂ (Trebuie să fie prima linie Streamlit) ---
+# --- 1. CONFIGURARE PAGINĂ ---
 st.set_page_config(page_title="PRIME Terminal", page_icon="🛡️", layout="wide")
 
-# --- 2. SISTEM DE SECURITATE (LOGIN) ---
-def check_password():
-    """Returnează True dacă utilizatorul are parola corectă."""
-    
-    # Dacă utilizatorul e deja logat, îl lăsăm să treacă
-    if st.session_state.get('password_correct', False):
+# =========================================================
+# NIVEL 1: SECURITATE LA INTRARE (LOGIN GENERAL)
+# =========================================================
+def check_access_password():
+    """Verifică dacă utilizatorul are dreptul să vadă site-ul."""
+    if st.session_state.get('access_granted', False):
         return True
 
-    # Titlu și câmp de parolă
-    st.markdown("## 🔒 Acces Restricționat")
-    st.write("Te rog introdu parola pentru a accesa terminalul.")
+    st.markdown("## 🔒 Terminal Privat")
+    st.write("Introdu parola de acces general pentru a vizualiza datele.")
     
-    password_input = st.text_input("Parola", type="password")
+    password_input = st.text_input("Parola Acces", type="password", key="login_pass")
     
-    if st.button("Log In"):
-        # Aici citim parola pe care ai scris-o tu în SECRETS pe site
-        # "PASSWORD" trebuie să fie exact cum ai scris în căsuța din setări
-        secret_pass = st.secrets.get("PASSWORD", "admin") 
+    if st.button("Intră în Aplicație"):
+        # Citim parola de acces din Secrets
+        secret_access = st.secrets.get("ACCESS_PASSWORD", "1234") 
         
-        if password_input == secret_pass:
-            st.session_state['password_correct'] = True
-            st.success("Parolă corectă!")
-            st.rerun() # Reîncărcăm pagina ca să dispară login-ul
+        if password_input == secret_access:
+            st.session_state['access_granted'] = True
+            st.rerun()
         else:
-            st.error("😕 Parolă greșită.")
+            st.error("⛔ Parolă de acces greșită.")
 
     return False
 
-# VERIFICAREA: Dacă parola nu e bună, OPRIM totul aici.
-if not check_password():
+# DACA NU E LOGAT, OPRIM TOTUL AICI
+if not check_access_password():
     st.stop()
 
 # =========================================================
-# DACA AJUNGEM AICI, INSEAMNA CA PAROLA E CORECTA
-# APLICATIA NORMALA INCEPE MAI JOS
+# AICI ÎNCEPE APLICAȚIA (DOAR DUPĂ LOGIN)
 # =========================================================
 
 # --- CSS ---
@@ -113,35 +109,29 @@ def get_stock_data(ticker, period="5y"):
 def calculate_prime_score(info, history):
     score = 0
     reasons = []
-    
     if not history.empty:
         sma = history['Close'].mean() 
         current = history['Close'].iloc[-1]
         if current > sma:
             score += 20
-            reasons.append("Trend Ascendent (Peste medie)")
-    
+            reasons.append("Trend Ascendent")
     pm = info.get('profitMargins', 0) or 0
     if pm > 0.15: 
         score += 20
-        reasons.append(f"Marja Profit Solida: {pm*100:.1f}%")
-        
+        reasons.append(f"Marja Profit: {pm*100:.1f}%")
     rg = info.get('revenueGrowth', 0) or 0
     if rg > 0.10: 
         score += 20
         reasons.append(f"Crestere Venituri: {rg*100:.1f}%")
-        
     pe = info.get('trailingPE', 0) or 0
     if 0 < pe < 40:
         score += 20
         reasons.append(f"Evaluare Corecta (P/E: {pe:.2f})")
-    
     cash = info.get('totalCash', 0) or 0
     debt = info.get('totalDebt', 0) or 0
     if cash > debt:
         score += 20
-        reasons.append("Bilant Puternic (Cash > Datorii)")
-        
+        reasons.append("Bilant Puternic")
     return score, reasons
 
 def get_news_sentiment(stock):
@@ -153,7 +143,6 @@ def get_news_sentiment(stock):
                 t = n.get('title', '')
                 if t and t not in headlines: headlines.append(t)
         if not headlines: return "Neutru", ["Fara stiri recente."]
-        
         pos = ['beat', 'rise', 'jump', 'buy', 'growth', 'strong', 'record', 'profit']
         neg = ['miss', 'fall', 'drop', 'sell', 'weak', 'loss', 'crash', 'risk']
         val = 0
@@ -194,8 +183,6 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     pdf.cell(95, 8, f"Max Drawdown: {risk['dd']:.1f}%", border=1, ln=True)
     pdf.cell(95, 8, f"RSI (14): {rsi_val:.2f}", border=1)
     pdf.cell(95, 8, f"Semnal RSI: {rsi_interp}", border=1, ln=True)
-    pdf.cell(95, 8, f"High 52W: {info.get('fiftyTwoWeekHigh', 'N/A')}", border=1)
-    pdf.cell(95, 8, f"Low 52W: {info.get('fiftyTwoWeekLow', 'N/A')}", border=1, ln=True)
 
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
@@ -213,8 +200,6 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     pdf.cell(63, 8, f"P/E Ratio: {get_fmt('trailingPE')}", border=1)
     pdf.cell(63, 8, f"Forward P/E: {get_fmt('forwardPE')}", border=1)
     pdf.cell(63, 8, f"PEG Ratio: {get_fmt('pegRatio')}", border=1, ln=True)
-    pdf.cell(63, 8, f"Price/Book: {get_fmt('priceToBook')}", border=1)
-    pdf.cell(63, 8, f"Price/Sales: {get_fmt('priceToSalesTrailing12Months')}", border=1)
     pdf.cell(63, 8, f"EV: {info.get('enterpriseValue', 0)/1e9:.1f}B", border=1, ln=True)
 
     pdf.ln(2)
@@ -223,9 +208,7 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     pdf.set_font("Arial", '', 11)
     pdf.cell(63, 8, f"Marja Profit: {get_fmt('profitMargins', True)}", border=1)
     pdf.cell(63, 8, f"Marja Ops: {get_fmt('operatingMargins', True)}", border=1)
-    pdf.cell(63, 8, f"ROE: {get_fmt('returnOnEquity', True)}", border=1, ln=True)
-    pdf.cell(63, 8, f"Crestere Venit: {get_fmt('revenueGrowth', True)}", border=1)
-    pdf.cell(63, 8, f"Gross Margins: {get_fmt('grossMargins', True)}", border=1, ln=True)
+    pdf.cell(63, 8, f"Crestere Venit: {get_fmt('revenueGrowth', True)}", border=1, ln=True)
 
     pdf.ln(2)
     pdf.set_font("Arial", 'B', 11)
@@ -235,8 +218,6 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     debt = info.get('totalDebt', 0)
     pdf.cell(95, 8, f"Total Cash: ${cash/1e9:.1f} B", border=1)
     pdf.cell(95, 8, f"Datorie Totala: ${debt/1e9:.1f} B", border=1, ln=True)
-    pdf.cell(95, 8, f"Current Ratio: {get_fmt('currentRatio')}", border=1)
-    pdf.cell(95, 8, f"Cash/Share: {get_fmt('totalCashPerShare')}", border=1, ln=True)
 
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
@@ -249,7 +230,7 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     pdf.multi_cell(0, 5, "DISCLAIMER: Generat automat. Nu este sfat financiar.")
     return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-# --- SIDEBAR ---
+# --- SIDEBAR (SEARCH) ---
 st.sidebar.title(f"🔍 {st.session_state.active_ticker}")
 st.sidebar.write("Căutare Nouă:")
 
@@ -265,42 +246,74 @@ with st.sidebar.form(key='search_form'):
 
 st.sidebar.markdown("---")
 
-if st.sidebar.button("➕ Salvează la Favorite"):
-    ticker_to_add = st.session_state.active_ticker
-    if ticker_to_add not in st.session_state.favorites:
-        try:
-            t_info = yf.Ticker(ticker_to_add).info
-            long_name = t_info.get('longName', ticker_to_add)
-            st.session_state.favorites.append(ticker_to_add)
-            st.session_state.favorite_names[ticker_to_add] = long_name
-            save_db(st.session_state.favorites, st.session_state.favorite_names)
-            st.sidebar.success("Salvat!")
-            st.rerun()
-        except Exception: st.sidebar.error("Eroare!")
+# =========================================================
+# NIVEL 2: SECURITATE LA EDITARE (ADMIN ONLY)
+# =========================================================
+
+st.sidebar.caption("🔧 Zonă Administrator")
+# Câmpul pentru parola de ADMIN (separat de cea de acces)
+admin_input = st.sidebar.text_input("Parola Editare", type="password", placeholder="Pentru a modifica lista...")
+secret_admin_key = st.secrets.get("ADMIN_PASSWORD", "admin_secret")
+
+# Verificăm dacă parola introdusă este cea de Admin
+IS_ADMIN = (admin_input == secret_admin_key)
+
+if IS_ADMIN:
+    st.sidebar.success("✅ Mod Editare Activ")
+    
+    # 1. Buton ADAUGĂ (Doar dacă ești Admin)
+    if st.sidebar.button("➕ Adaugă la Favorite"):
+        ticker_to_add = st.session_state.active_ticker
+        if ticker_to_add not in st.session_state.favorites:
+            try:
+                t_info = yf.Ticker(ticker_to_add).info
+                long_name = t_info.get('longName', ticker_to_add)
+                st.session_state.favorites.append(ticker_to_add)
+                st.session_state.favorite_names[ticker_to_add] = long_name
+                save_db(st.session_state.favorites, st.session_state.favorite_names)
+                st.sidebar.success("Salvat!")
+                st.rerun()
+            except Exception: st.sidebar.error("Eroare!")
+else:
+    # Dacă nu ești Admin, vezi doar un mesaj informativ
+    if st.session_state.active_ticker not in st.session_state.favorites:
+        st.sidebar.info("🔒 Loghează-te ca Admin pentru a adăuga.")
 
 st.sidebar.subheader("Lista Mea")
+
+# Afișare Lista
 if st.session_state.favorites:
     for fav in st.session_state.favorites:
         full_n = st.session_state.favorite_names.get(fav, fav)
-        c1, c2 = st.sidebar.columns([4, 1])
+        
+        # Admin vede coloana cu butonul X
+        if IS_ADMIN:
+            c1, c2 = st.sidebar.columns([4, 1])
+        else:
+            c1 = st.sidebar # Vizitatorul vede doar numele
         
         def set_fav(f=fav): st.session_state.active_ticker = f
         def del_fav(f=fav): 
             st.session_state.favorites.remove(f)
             save_db(st.session_state.favorites, st.session_state.favorite_names)
 
-        c1.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
-        c2.button("X", key=f"del_{fav}", on_click=del_fav)
+        # Toată lumea poate da click pe nume să încarce
+        if IS_ADMIN:
+            c1.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
+            # 2. Buton STERGE (Doar dacă ești Admin)
+            c2.button("X", key=f"del_{fav}", on_click=del_fav) 
+        else:
+            st.sidebar.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
 else:
-    st.sidebar.info("Nicio companie salvată.")
-    
-# Buton de Logout
+    st.sidebar.info("Lista este goală.")
+
+# Buton Logout General (Iese de tot din site)
 st.sidebar.markdown("---")
-if st.sidebar.button("🔒 Logout"):
-    st.session_state['password_correct'] = False
+if st.sidebar.button("🔒 Logout Site"):
+    st.session_state['access_granted'] = False
     st.rerun()
 
-# --- MAIN APP ---
+# --- MAIN APP (PUBLIC DUPA ACCES) ---
 temp_stock = yf.Ticker(st.session_state.active_ticker)
 try: temp_name = temp_stock.info.get('longName', st.session_state.active_ticker)
 except: temp_name = st.session_state.active_ticker
