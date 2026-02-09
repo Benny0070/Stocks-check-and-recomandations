@@ -25,7 +25,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- SISTEM DE SALVARE PERMANENTA (JSON) ---
+# --- SISTEM SALVARE (JSON) ---
 DB_FILE = "prime_favorites.json"
 
 def load_db():
@@ -41,7 +41,7 @@ def save_db(fav_list, fav_names):
     with open(DB_FILE, "w") as f:
         json.dump({"favorites": fav_list, "names": fav_names}, f)
 
-# --- INIȚIALIZARE STATE (CU INCARCARE DIN FISIER) ---
+# --- INIȚIALIZARE STATE ---
 if 'db_loaded' not in st.session_state:
     data = load_db()
     st.session_state.favorites = data.get("favorites", [])
@@ -77,7 +77,6 @@ def calculate_prime_score(info, history):
     score = 0
     reasons = []
     
-    # 1. Trend
     if not history.empty:
         sma = history['Close'].mean() 
         current = history['Close'].iloc[-1]
@@ -85,25 +84,21 @@ def calculate_prime_score(info, history):
             score += 20
             reasons.append("Trend Ascendent (Peste medie)")
     
-    # 2. Profitabilitate
     pm = info.get('profitMargins', 0) or 0
     if pm > 0.15: 
         score += 20
         reasons.append(f"Marja Profit Solida: {pm*100:.1f}%")
         
-    # 3. Creștere
     rg = info.get('revenueGrowth', 0) or 0
     if rg > 0.10: 
         score += 20
         reasons.append(f"Crestere Venituri: {rg*100:.1f}%")
         
-    # 4. Evaluare
     pe = info.get('trailingPE', 0) or 0
     if 0 < pe < 40:
         score += 20
         reasons.append(f"Evaluare Corecta (P/E: {pe:.2f})")
     
-    # 5. Cash
     cash = info.get('totalCash', 0) or 0
     debt = info.get('totalDebt', 0) or 0
     if cash > debt:
@@ -120,7 +115,6 @@ def get_news_sentiment(stock):
             for n in news[:5]:
                 t = n.get('title', '')
                 if t and t not in headlines: headlines.append(t)
-        
         if not headlines: return "Neutru", ["Fara stiri recente."]
         
         pos = ['beat', 'rise', 'jump', 'buy', 'growth', 'strong', 'record', 'profit']
@@ -129,68 +123,56 @@ def get_news_sentiment(stock):
         for h in headlines:
             if any(x in h.lower() for x in pos): val += 1
             if any(x in h.lower() for x in neg): val -= 1
-            
         sent = "Pozitiv 🟢" if val > 0 else "Negativ 🔴" if val < 0 else "Neutru ⚪"
         return sent, headlines
     except:
         return "Indisponibil", []
 
-# --- GENERARE PDF EXTINS ---
 def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk, info, rsi_val):
     pdf = FPDF()
     pdf.add_page()
-    
-    # 1. HEADER
     pdf.set_font("Arial", 'B', 20)
     pdf.cell(0, 15, f"RAPORT DE AUDIT: {ticker}", ln=True, align='C')
     pdf.set_font("Arial", '', 10)
     pdf.cell(0, 10, f"Generat la: {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align='C')
     pdf.ln(5)
 
-    # 2. REZUMAT EXECUTIV
     pdf.set_fill_color(230, 230, 230)
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, "1. REZUMAT EXECUTIV", ln=True, fill=True)
     pdf.ln(2)
-    
     pdf.set_font("Arial", '', 12)
     pdf.cell(50, 10, f"Companie: {clean_text_for_pdf(full_name)}", ln=True)
     pdf.cell(50, 10, f"Pret Curent: ${price:.2f}", ln=True)
     pdf.cell(50, 10, f"Scor PRIME: {score}/100", ln=True)
     pdf.cell(50, 10, f"Verdict: {clean_text_for_pdf(verdict)}", ln=True)
     
-    # 3. ANALIZA TEHNICA & RISC
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, "2. PROFIL DE RISC & TEHNIC", ln=True, fill=True)
     pdf.ln(2)
     pdf.set_font("Arial", '', 11)
-    
     rsi_interp = "Supra-cumparat (Scump)" if rsi_val > 70 else "Supra-vandut (Ieftin)" if rsi_val < 30 else "Neutru"
-    
-    pdf.cell(95, 8, f"Volatilitate (Risc): {risk['vol']:.1f}%", border=1)
-    pdf.cell(95, 8, f"Max Drawdown (Cadere Max): {risk['dd']:.1f}%", border=1, ln=True)
+    pdf.cell(95, 8, f"Volatilitate: {risk['vol']:.1f}%", border=1)
+    pdf.cell(95, 8, f"Max Drawdown: {risk['dd']:.1f}%", border=1, ln=True)
     pdf.cell(95, 8, f"RSI (14): {rsi_val:.2f}", border=1)
     pdf.cell(95, 8, f"Semnal RSI: {rsi_interp}", border=1, ln=True)
-    pdf.cell(95, 8, f"High 52 Saptamani: {info.get('fiftyTwoWeekHigh', 'N/A')}", border=1)
-    pdf.cell(95, 8, f"Low 52 Saptamani: {info.get('fiftyTwoWeekLow', 'N/A')}", border=1, ln=True)
+    pdf.cell(95, 8, f"High 52W: {info.get('fiftyTwoWeekHigh', 'N/A')}", border=1)
+    pdf.cell(95, 8, f"Low 52W: {info.get('fiftyTwoWeekLow', 'N/A')}", border=1, ln=True)
 
-    # 4. DATE FUNDAMENTALE
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(0, 10, "3. INDICATORI FUNDAMENTALI", ln=True, fill=True)
     pdf.ln(2)
-    
     def get_fmt(key, is_perc=False):
         val = info.get(key)
         if val is None: return "N/A"
         if is_perc: return f"{val*100:.2f}%"
         return f"{val:.2f}"
-
+    
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(0, 8, "A. Evaluare", ln=True)
     pdf.set_font("Arial", '', 11)
-    
     pdf.cell(63, 8, f"P/E Ratio: {get_fmt('trailingPE')}", border=1)
     pdf.cell(63, 8, f"Forward P/E: {get_fmt('forwardPE')}", border=1)
     pdf.cell(63, 8, f"PEG Ratio: {get_fmt('pegRatio')}", border=1, ln=True)
@@ -202,41 +184,35 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(0, 8, "B. Profitabilitate", ln=True)
     pdf.set_font("Arial", '', 11)
-    
     pdf.cell(63, 8, f"Marja Profit: {get_fmt('profitMargins', True)}", border=1)
-    pdf.cell(63, 8, f"Marja Operationala: {get_fmt('operatingMargins', True)}", border=1)
+    pdf.cell(63, 8, f"Marja Ops: {get_fmt('operatingMargins', True)}", border=1)
     pdf.cell(63, 8, f"ROE: {get_fmt('returnOnEquity', True)}", border=1, ln=True)
-    pdf.cell(63, 8, f"Crestere Venituri: {get_fmt('revenueGrowth', True)}", border=1)
+    pdf.cell(63, 8, f"Crestere Venit: {get_fmt('revenueGrowth', True)}", border=1)
     pdf.cell(63, 8, f"Gross Margins: {get_fmt('grossMargins', True)}", border=1, ln=True)
 
     pdf.ln(2)
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(0, 8, "C. Bilant", ln=True)
     pdf.set_font("Arial", '', 11)
-    
     cash = info.get('totalCash', 0)
     debt = info.get('totalDebt', 0)
-    
     pdf.cell(95, 8, f"Total Cash: ${cash/1e9:.1f} B", border=1)
     pdf.cell(95, 8, f"Datorie Totala: ${debt/1e9:.1f} B", border=1, ln=True)
     pdf.cell(95, 8, f"Current Ratio: {get_fmt('currentRatio')}", border=1)
     pdf.cell(95, 8, f"Cash/Share: {get_fmt('totalCashPerShare')}", border=1, ln=True)
 
-    # 5. MOTIVE
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 10, "4. DETALII SCORING", ln=True, fill=True)
+    pdf.cell(0, 10, "4. MOTIVE SCOR", ln=True, fill=True)
     pdf.set_font("Arial", '', 11)
-    for r in reasons:
-        pdf.cell(0, 8, f" -> {clean_text_for_pdf(r)}", ln=True)
+    for r in reasons: pdf.cell(0, 8, f" -> {clean_text_for_pdf(r)}", ln=True)
 
-    # Disclaimer
     pdf.ln(10)
     pdf.set_font("Arial", 'I', 8)
     pdf.multi_cell(0, 5, "DISCLAIMER: Generat automat. Nu este sfat financiar.")
     return pdf.output(dest='S').encode('latin-1', 'ignore')
 
-# --- SIDEBAR ---
+# --- SIDEBAR CU PAROLA ADMIN ---
 st.sidebar.title(f"🔍 {st.session_state.active_ticker}")
 st.sidebar.write("Căutare Nouă:")
 
@@ -252,49 +228,56 @@ with st.sidebar.form(key='search_form'):
 
 st.sidebar.markdown("---")
 
-if st.sidebar.button("➕ Salvează la Favorite"):
-    ticker_to_add = st.session_state.active_ticker
-    if ticker_to_add not in st.session_state.favorites:
-        try:
-            t_info = yf.Ticker(ticker_to_add).info
-            long_name = t_info.get('longName', ticker_to_add)
-            
-            # Adaugam in Session State
-            st.session_state.favorites.append(ticker_to_add)
-            st.session_state.favorite_names[ticker_to_add] = long_name
-            
-            # SALVAM PERMANENT IN FISIER
-            save_db(st.session_state.favorites, st.session_state.favorite_names)
-            
-            st.sidebar.success("Salvat Permanent!")
-            st.rerun()
-        except Exception: 
-            st.sidebar.error("Eroare!")
+# 1. CEREM PAROLA
+admin_pass = st.sidebar.text_input("🔐 Parola Admin (pt editare)", type="password")
+IS_ADMIN = (admin_pass == "nigger") # <--- AICI MODIFICI PAROLA TA
+
+# 2. BUTONUL "ADAUGA" APARE DOAR DACA ESTI ADMIN
+if IS_ADMIN:
+    if st.sidebar.button("➕ Salvează la Favorite"):
+        ticker_to_add = st.session_state.active_ticker
+        if ticker_to_add not in st.session_state.favorites:
+            try:
+                t_info = yf.Ticker(ticker_to_add).info
+                long_name = t_info.get('longName', ticker_to_add)
+                st.session_state.favorites.append(ticker_to_add)
+                st.session_state.favorite_names[ticker_to_add] = long_name
+                save_db(st.session_state.favorites, st.session_state.favorite_names)
+                st.sidebar.success("Salvat!")
+                st.rerun()
+            except Exception: st.sidebar.error("Eroare!")
+elif not IS_ADMIN and st.session_state.active_ticker not in st.session_state.favorites:
+    st.sidebar.info("🔒 Loghează-te pentru a salva.")
 
 st.sidebar.subheader("Lista Mea")
 if st.session_state.favorites:
     for fav in st.session_state.favorites:
         full_n = st.session_state.favorite_names.get(fav, fav)
-        c1, c2 = st.sidebar.columns([4, 1])
+        
+        # Daca e admin, aratam si butonul de stergere (X)
+        if IS_ADMIN:
+            c1, c2 = st.sidebar.columns([4, 1])
+        else:
+            c1 = st.sidebar # Daca nu e admin, folosim toata latimea pt nume
         
         def set_fav(f=fav): st.session_state.active_ticker = f
-        
-        # Functie speciala pentru stergere si salvare
         def del_fav(f=fav): 
             st.session_state.favorites.remove(f)
             save_db(st.session_state.favorites, st.session_state.favorite_names)
 
-        c1.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
-        c2.button("X", key=f"del_{fav}", on_click=del_fav)
+        # Butonul cu numele companiei (vizibil pt toata lumea)
+        if IS_ADMIN:
+            c1.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
+            c2.button("X", key=f"del_{fav}", on_click=del_fav) # Doar adminul sterge
+        else:
+            st.sidebar.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
 else:
     st.sidebar.info("Nicio companie salvată.")
 
 # --- MAIN APP ---
 temp_stock = yf.Ticker(st.session_state.active_ticker)
-try:
-    temp_name = temp_stock.info.get('longName', st.session_state.active_ticker)
-except:
-    temp_name = st.session_state.active_ticker
+try: temp_name = temp_stock.info.get('longName', st.session_state.active_ticker)
+except: temp_name = st.session_state.active_ticker
 
 st.title(f"🛡️ {st.session_state.active_ticker}")
 st.caption(f"{temp_name}")
@@ -335,13 +318,11 @@ if stock and not history.empty:
         st.metric("RSI (14)", f"{rsi_val:.2f}")
         if rsi_val > 70: st.warning("Supra-cumparat (>70)")
         elif rsi_val < 30: st.success("Supra-vandut (<30)")
-        
         st.markdown("---")
         st.subheader("Insider Trading")
         try:
             ins = stock.insider_transactions
-            if ins is not None and not ins.empty:
-                st.dataframe(ins.head(10)[['Start Date', 'Insider', 'Shares', 'Text']])
+            if ins is not None and not ins.empty: st.dataframe(ins.head(10)[['Start Date', 'Insider', 'Shares', 'Text']])
             else: st.info("Fara date insideri.")
         except: st.info("Indisponibil.")
 
@@ -384,8 +365,7 @@ if stock and not history.empty:
                 b64 = base64.b64encode(pdf_bytes).decode()
                 href = f'<a href="data:application/octet-stream;base64,{b64}" download="Raport_Audit_{st.session_state.active_ticker}.pdf">📥 Descarca PDF</a>'
                 st.markdown(href, unsafe_allow_html=True)
-            except Exception as e: 
-                st.error(f"Eroare generare PDF: {str(e)}")
+            except Exception as e: st.error(f"Eroare generare PDF: {str(e)}")
 
     with tab7:
         if len(st.session_state.favorites) >= 2:
@@ -397,6 +377,5 @@ if stock and not history.empty:
                     if not h.empty: df[t] = (h/h.iloc[0]-1)*100
                 st.line_chart(df)
         else: st.info("Adauga 2 favorite pt comparatie.")
-
 else:
     st.error(f"Nu am găsit date pentru {st.session_state.active_ticker}. Verifică simbolul.")
