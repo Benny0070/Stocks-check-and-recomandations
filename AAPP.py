@@ -430,7 +430,7 @@ if stock and not history.empty:
         st.write(f"Sentiment: **{s}**")
         for h in heads: st.markdown(f"- {h}")
 
-with tab5:
+    with tab5:
         # --- LOGICĂ REPARATĂ PENTRU DIVIDENDE ---
         div_rate = info.get('dividendRate')      
         div_yield = info.get('dividendYield')    
@@ -474,7 +474,7 @@ with tab5:
         else:
             st.info("Această companie nu plătește dividende sau datele lipsesc.")
 
-with tab6:
+    with tab6:
         st.write("Genereaza un raport complet.")
         if st.button("📄 Descarca Raport Complet"):
             try:
@@ -498,7 +498,7 @@ with tab6:
             except Exception as e: 
                 st.error(f"Eroare generare PDF: {str(e)}")
 
-with tab7:
+    with tab7:
         if len(st.session_state.favorites) >= 2:
             st.subheader("🏁 Cursa Prețului (1 An)")
             sel = st.multiselect("Alege companii:", st.session_state.favorites, default=st.session_state.favorites[:2])
