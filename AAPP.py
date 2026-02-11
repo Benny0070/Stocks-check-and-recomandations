@@ -430,34 +430,47 @@ if stock and not history.empty:
         st.write(f"Sentiment: **{s}**")
         for h in heads: st.markdown(f"- {h}")
 
-    with tab5:
-        div_rate = info.get('dividendRate')     
-        div_yield = info.get('dividendYield')   
+with tab5:
+        # --- LOGICĂ REPARATĂ PENTRU DIVIDENDE ---
+        div_rate = info.get('dividendRate')      
+        div_yield = info.get('dividendYield')    
         
+        # 1. Calcul de rezervă dacă lipsește yield-ul
         if (div_yield is None or div_yield == 0) and (div_rate is not None and div_rate > 0):
              div_yield = div_rate / curr_price
              
         if div_yield is None: div_yield = 0
         if div_rate is None: div_rate = 0
 
+        # 2. LOGICA INTELIGENTĂ (Aici e reparația)
+        # Dacă yield-ul e mai mare de 1 (adică 100%), e suspect. 
+        # De obicei înseamnă că Yahoo l-a trimis deja ca procent (ex: 3.41)
+        # Sau e o eroare de valută (pence vs lire).
+        
+        if div_yield > 1:
+            display_yield = div_yield # Îl lăsăm așa (ex: 3.41)
+        else:
+            display_yield = div_yield * 100 # Îl transformăm (ex: 0.0341 -> 3.41)
+
         c1, c2 = st.columns(2)
-        c1.metric("Randament (Yield)", f"{div_yield * 100:.2f}%")
-        c2.metric("Plată Anuală / Acțiune", f"${div_rate:.2f}")
+        c1.metric("Randament (Yield)", f"{display_yield:.2f}%")
+        c2.metric("Plată Anuală / Acțiune", f"{div_rate:.2f}")
         
         st.markdown("---")
 
-        if div_yield > 0:
+        if display_yield > 0:
             st.subheader("🧮 Calculator Venit Pasiv")
             inv = st.number_input("Investiție Simulată ($)", min_value=1.0, value=1000.0, step=100.0)
             
-            actiuni_cumparate = inv / curr_price
-            venit_anual = actiuni_cumparate * div_rate
+            # Folosim display_yield împărțit la 100 pentru calculul matematic corect
+            yield_real = display_yield / 100
+            
+            venit_anual = inv * yield_real
             venit_lunar = venit_anual / 12
             
             col_a, col_b = st.columns(2)
             col_a.info(f"💰 Venit Lunar: **${venit_lunar:.2f}**")
             col_b.success(f"📅 Venit Anual: **${venit_anual:.2f}**")
-            st.caption(f"*Calculat pe baza a {actiuni_cumparate:.2f} acțiuni.")
         else:
             st.info("Această companie nu plătește dividende sau datele lipsesc.")
 
