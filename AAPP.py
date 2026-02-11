@@ -551,48 +551,68 @@ if stock and not history.empty:
         for h in heads: st.markdown(f"- {h}")
 
     with tab5:
-        # --- LOGICĂ REPARATĂ PENTRU DIVIDENDE ---
-        div_rate = info.get('dividendRate')      
-        div_yield = info.get('dividendYield')    
+        st.subheader("💰 Dividende & Venit Pasiv")
         
-        # 1. Calcul de rezervă dacă lipsește yield-ul
-        if (div_yield is None or div_yield == 0) and (div_rate is not None and div_rate > 0):
-             div_yield = div_rate / curr_price
-             
-        if div_yield is None: div_yield = 0
-        if div_rate is None: div_rate = 0
+        # 1. PRELUARE DATE AUTOMATE
+        div_rate = info.get('dividendRate', 0)
+        div_yield_raw = info.get('dividendYield', 0)
+        
+        # Dacă lipsește yield-ul dat de Yahoo, îl calculăm noi brut
+        if (div_yield_raw is None or div_yield_raw == 0) and (div_rate and div_rate > 0):
+             div_yield_raw = div_rate / curr_price
 
-        # 2. LOGICA INTELIGENTĂ (Aici e reparația)
-        # Dacă yield-ul e mai mare de 1 (adică 100%), e suspect. 
-        # De obicei înseamnă că Yahoo l-a trimis deja ca procent (ex: 3.41)
-        # Sau e o eroare de valută (pence vs lire).
-        
-        if div_yield > 1:
-            display_yield = div_yield # Îl lăsăm așa (ex: 3.41)
+        # Standardizare: Yahoo dă de obicei 0.05 pentru 5%. Noi vrem procentul (5.0).
+        # Dacă e None, punem 0.
+        if div_yield_raw is None: 
+            auto_yield = 0.0
         else:
-            display_yield = div_yield * 100 # Îl transformăm (ex: 0.0341 -> 3.41)
+            auto_yield = div_yield_raw * 100
 
-        c1, c2 = st.columns(2)
-        c1.metric("Randament (Yield)", f"{display_yield:.2f}%")
-        c2.metric("Plată Anuală / Acțiune", f"{div_rate:.2f}")
+        # 2. ZONA DE CONTROL MANUAL
+        col_info, col_edit = st.columns([2, 1])
         
+        with col_info:
+            # Afișăm ce a găsit sistemul
+            st.write(f"Yield detectat automat: **{auto_yield:.2f}%**")
+            st.caption(f"Plată anuală (est): ${div_rate if div_rate else 0}")
+
+        with col_edit:
+            # Aici e soluția ta: BUTONUL DE MODIFICARE
+            override = st.checkbox("✏️ Corectează Manual")
+        
+        if override:
+            # Dacă bifezi, tu decizi cât e randamentul
+            final_yield = st.number_input("Introdu Randamentul Corect (%):", value=float(auto_yield), step=0.1, format="%.2f")
+            st.success(f"Folosim randamentul manual: {final_yield}%")
+        else:
+            # Dacă nu bifezi, mergem pe mâna robotului
+            final_yield = auto_yield
+
         st.markdown("---")
 
-        if display_yield > 0:
+        # 3. CALCULATOR VENIT PASIV (Folosește final_yield)
+        if final_yield > 0:
             st.subheader("🧮 Calculator Venit Pasiv")
-            inv = st.number_input("Investiție Simulată ($)", min_value=1.0, value=1000.0, step=100.0)
+            st.write("Câți bani vrei să investești?")
             
-            # Folosim display_yield împărțit la 100 pentru calculul matematic corect
-            yield_real = display_yield / 100
+            inv = st.number_input("Suma Investită ($)", min_value=100.0, value=1000.0, step=100.0, key="inv_calc")
             
-            venit_anual = inv * yield_real
+            # Calcul matematic: (Suma * Procent) / 100
+            venit_anual = inv * (final_yield / 100)
             venit_lunar = venit_anual / 12
             
-            col_a, col_b = st.columns(2)
-            col_a.info(f"💰 Venit Lunar: **${venit_lunar:.2f}**")
-            col_b.success(f"📅 Venit Anual: **${venit_anual:.2f}**")
+            # Afișare rezultate
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Investiție", f"${inv:,.0f}")
+            c2.metric("Venit Lunar", f"${venit_lunar:.2f}")
+            c3.metric("Venit Anual", f"${venit_anual:.2f}")
+            
+            # Proiecție pe 10 ani (fără reinvestire, simplu)
+            st.progress(min(int(final_yield * 2), 100)) # O bară vizuală pentru cât de mare e yield-ul
+            st.caption(f"La un randament de {final_yield}%, îți recuperezi investiția din dividende în aproximativ {100/final_yield:.1f} ani (fără creșterea prețului).")
+            
         else:
-            st.info("Această companie nu plătește dividende sau datele lipsesc.")
+            st.info("Această companie nu pare să plătească dividende (0%). Dacă greșesc, bifează 'Corectează Manual' sus.")
 
     with tab6:
         st.write("Genereaza un raport complet.")
