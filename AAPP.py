@@ -7,7 +7,7 @@ import base64
 from datetime import datetime
 import json
 import os
-import plotly.graph_objects as go # IMPORT NOU PENTRU GRAFICE PRO
+import plotly.graph_objects as go 
 
 # --- 1. CONFIGURARE PAGINĂ ---
 st.set_page_config(page_title="PRIME Terminal", page_icon="🛡️", layout="wide")
@@ -97,8 +97,7 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# --- MODIFICARE 1: CACHING (VITEZA) ---
-@st.cache_data(ttl=3600*12) # Ține minte datele 12 ore
+# --- FUNCȚIA FĂRĂ CACHE (MODIFICATĂ) ---
 def get_stock_data(ticker, period="5y"):
     try:
         stock = yf.Ticker(ticker)
@@ -108,7 +107,6 @@ def get_stock_data(ticker, period="5y"):
     except:
         return None, None, None
 
-# --- MODIFICARE 2: RISK METRICS (SHARPE RATIO) ---
 def calculate_risk_metrics(history):
     if history.empty: return 0, 0, 0
     
@@ -120,7 +118,7 @@ def calculate_risk_metrics(history):
     # 2. Max Drawdown
     max_dd = ((history['Close'] / history['Close'].cummax()) - 1).min() * 100
     
-    # 3. Sharpe Ratio (NOU)
+    # 3. Sharpe Ratio
     risk_free_rate = 0.04
     mean_return = daily_ret.mean() * 252
     std_dev = daily_ret.std() * np.sqrt(252)
@@ -130,12 +128,11 @@ def calculate_risk_metrics(history):
     
     return volatility, max_dd, sharpe
 
-# --- MODIFICARE 3: SCOR INTELIGENT (PEG, ROE, FCF) ---
 def calculate_prime_score(info, history):
     score = 0
     reasons = []
     
-    # 1. TREND (SMA200 sau media simplă)
+    # 1. TREND
     if not history.empty:
         if len(history) > 200:
             sma = history['Close'].rolling(window=200).mean().iloc[-1]
@@ -149,28 +146,28 @@ def calculate_prime_score(info, history):
             score += 20
             reasons.append(f"Trend Ascendent (Peste {trend_name})")
 
-    # 2. EVALUARE (PEG vs PE)
+    # 2. EVALUARE
     peg = info.get('pegRatio')
     if peg is not None and 0 < peg < 2.0:
         score += 20
         reasons.append(f"Preț Bun pt Creștere (PEG: {peg:.2f})")
-    elif info.get('trailingPE', 100) < 25: # Fallback
+    elif info.get('trailingPE', 100) < 25: 
         score += 10
         reasons.append("P/E Decent (<25)")
 
-    # 3. EFICIENȚĂ MANAGEMENT (ROE)
+    # 3. EFICIENȚĂ
     roe = info.get('returnOnEquity', 0) or 0
     if roe > 0.15:
         score += 20
         reasons.append(f"Management Eficient (ROE: {roe*100:.1f}%)")
 
-    # 4. CREȘTERE (Revenue Growth)
+    # 4. CREȘTERE
     rg = info.get('revenueGrowth', 0) or 0
     if rg > 0.10: 
         score += 20
         reasons.append(f"Creștere Venituri: {rg*100:.1f}%")
 
-    # 5. SIGURANȚĂ (Free Cash Flow)
+    # 5. SIGURANȚĂ
     fcf = info.get('freeCashflow')
     if fcf is not None and fcf > 0:
         score += 20
@@ -226,7 +223,6 @@ def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk,
     pdf.ln(2)
     pdf.set_font("Arial", '', 11)
     
-    # Risk table
     pdf.cell(63, 8, f"Volatilitate: {risk['vol']:.1f}%", border=1)
     pdf.cell(63, 8, f"Max Drawdown: {risk['dd']:.1f}%", border=1)
     pdf.cell(63, 8, f"Sharpe Ratio: {risk.get('sharpe', 0):.2f}", border=1, ln=True)
@@ -354,18 +350,15 @@ stock, history, info = get_stock_data(st.session_state.active_ticker, period=per
 if stock and not history.empty:
     curr_price = history['Close'].iloc[-1]
     
-    # Calculăm metrici cu noile funcții
     volatility, max_dd, sharpe = calculate_risk_metrics(history)
     score, reasons = calculate_prime_score(info, history)
     
-    # Verdict Logic 2.0
     if max_dd < -50: verdict = "Prăbușire Istorică 🔴"; style = "error"
     elif sharpe > 1.0 and score > 70: verdict = "💎 GEM (Oportunitate)"; style = "success"
     elif score > 60: verdict = "Solid 🟢"; style = "success"
     else: verdict = "Neutru / Riscant 🟡"; style = "warning"
 
     with tab1:
-        # 4 Coloane acum (Sharpe adăugat)
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Preț", f"${curr_price:.2f}")
         c2.metric("Scor PRIME", f"{score}/100")
@@ -376,7 +369,6 @@ if stock and not history.empty:
         elif style == "warning": st.warning(verdict)
         else: st.error(verdict)
         
-        # --- MODIFICARE 4: CANDLESTICK CHART ---
         fig = go.Figure(data=[go.Candlestick(
             x=history.index,
             open=history['Open'],
@@ -420,12 +412,10 @@ if stock and not history.empty:
         st.write(f"Sentiment: **{s}**")
         for h in heads: st.markdown(f"- {h}")
 
-    # --- MODIFICARE 5: DIVIDENDE BLINDATE ---
     with tab5:
         div_rate = info.get('dividendRate')     
         div_yield = info.get('dividendYield')   
         
-        # Logică de corecție
         if (div_yield is None or div_yield == 0) and (div_rate is not None and div_rate > 0):
              div_yield = div_rate / curr_price
              
@@ -477,7 +467,6 @@ if stock and not history.empty:
             except Exception as e: 
                 st.error(f"Eroare generare PDF: {str(e)}")
 
-    # --- MODIFICARE 6: TABEL COMPARATIV ---
     with tab7:
         if len(st.session_state.favorites) >= 2:
             st.subheader("🏁 Cursa Prețului (1 An)")
