@@ -474,7 +474,7 @@ with tab5:
         else:
             st.info("Această companie nu plătește dividende sau datele lipsesc.")
 
-    with tab6:
+with tab6:
         st.write("Genereaza un raport complet.")
         if st.button("📄 Descarca Raport Complet"):
             try:
