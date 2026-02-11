@@ -448,7 +448,7 @@ if stock and not history.empty:
 
         if div_yield > 0:
             st.subheader("🧮 Calculator Venit Pasiv")
-            inv = st.number_input("Investiție Simulată ($)", min_value=100.0, value=1000.0, step=100.0)
+            inv = st.number_input("Investiție Simulată ($)", min_value=1.0, value=1000.0, step=100.0)
             
             actiuni_cumparate = inv / curr_price
             venit_anual = actiuni_cumparate * div_rate
