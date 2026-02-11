@@ -498,7 +498,7 @@ with tab6:
             except Exception as e: 
                 st.error(f"Eroare generare PDF: {str(e)}")
 
-    with tab7:
+with tab7:
         if len(st.session_state.favorites) >= 2:
             st.subheader("🏁 Cursa Prețului (1 An)")
             sel = st.multiselect("Alege companii:", st.session_state.favorites, default=st.session_state.favorites[:2])
