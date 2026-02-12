@@ -107,20 +107,23 @@ def download_safe_data(ticker, period):
     return h, i
 
 def get_stock_data(ticker, period="5y"):
-    # Aceasta este funcția principală care leagă totul
-    try:
-        # 1. Recreăm obiectul rapid (pentru știri/calendar)
-        stock = yf.Ticker(ticker)
-        
-        # 2. Luăm datele grele din "seif" (cache) sau le descărcăm dacă au trecut 60s
-        history, info = download_safe_data(ticker, period)
-        
-        if history is None or history.empty:
-            return None, None, None
-            
-        return stock, history, info
-    except:
+    # --- VARIANTA FĂRĂ PROTECȚIE (DEBUG) ---
+    # Aceasta va lăsa aplicația să crape cu eroarea roșie reală,
+    # ca să știm dacă e problemă de internet, de bibliotecă sau de Yahoo.
+    
+    # 1. Creăm obiectul
+    stock = yf.Ticker(ticker)
+    
+    # 2. Descărcăm datele (funcția download_safe_data e deja fără protecție)
+    history, info = download_safe_data(ticker, period)
+    
+    # 3. Verificăm dacă datele sunt goale
+    if history is None or history.empty:
+        # Putem pune un mesaj aici să vedem dacă ajunge până la capăt
+        st.error("DEBUG: History a returnat Gol/None")
         return None, None, None
+        
+    return stock, history, info
 
 def calculate_risk_metrics(history):
     if history.empty: return 0, 0, 0
