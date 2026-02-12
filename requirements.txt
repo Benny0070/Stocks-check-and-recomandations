@@ -1,6 +1,8 @@
 streamlit
-pandas>=2.0.0
+pandas
 numpy
 yfinance>=0.2.40
 plotly
 fpdf
+lxml
+requests
