@@ -4,296 +4,690 @@ import pandas as pd
 import numpy as np
 from fpdf import FPDF
 import base64
-import os
-import plotly.graph_objects as go 
 from datetime import datetime
+import json
+import os
+import plotly.graph_objects as go
 
 # --- 1. CONFIGURARE PAGINĂ ---
-st.set_page_config(page_title="PRIME Terminal Pro", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="PRIME Terminal", page_icon="🛡️", layout="wide")
 
 # =========================================================
-# SYSTEM: DATA CACHING & ROBUSTNESS
+# NIVEL 1: SECURITATE LA INTRARE (LOGIN GENERAL)
 # =========================================================
+def check_access_password():
+    """Verifică dacă utilizatorul are dreptul să vadă site-ul."""
+    if st.session_state.get('access_granted', False):
+        return True
 
-# Funcție pentru a extrage date chiar dacă Yahoo e supărat
-@st.cache_data(ttl=600, show_spinner=False)
-def get_robust_data(ticker):
-    stock = yf.Ticker(ticker)
+    st.markdown("## 🔒 Terminal Privat")
+    st.write("Introdu parola de acces general pentru a vizualiza datele.")
     
-    # 1. ISTORIC (Merge 99% din timp)
-    try:
-        history = stock.history(period="2y") # Luăm 2 ani pentru SMA200
-    except:
-        history = pd.DataFrame()
-
-    # 2. INFO (Pică des, folosim fallback)
-    info = {}
-    try:
-        info = stock.info
-    except:
-        pass # Ignorăm eroarea, încercăm metoda Fast
+    password_input = st.text_input("Parola Acces", type="password", key="login_pass")
     
-    # 3. FAST INFO (Backup solid)
-    # Dacă info e gol sau are puține chei, completăm cu fast_info
-    if not info or len(info) < 5:
-        try:
-            fast = stock.fast_info
-            # Reconstruim manual dicționarul info
-            info['currentPrice'] = fast.last_price
-            info['marketCap'] = fast.market_cap
-            info['previousClose'] = fast.previous_close
-            info['currency'] = fast.currency
-            # Putem estima volumul mediu
-            info['averageVolume'] = history['Volume'].mean() if not history.empty else 0
-        except:
-            pass
-
-    return history, info
-
-# =========================================================
-# LOGICA DE CALCUL (COMPLEXĂ)
-# =========================================================
-
-def calculate_technicals(df):
-    if df.empty: return {}
-    
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    
-    # SMA (Medii Mobile)
-    sma_50 = df['Close'].rolling(window=50).mean()
-    sma_200 = df['Close'].rolling(window=200).mean()
-    
-    return {
-        'RSI': rsi.iloc[-1],
-        'SMA_50': sma_50.iloc[-1],
-        'SMA_200': sma_200.iloc[-1],
-        'Last_Close': df['Close'].iloc[-1]
-    }
-
-def calculate_prime_score(info, tech_data, history):
-    score = 0
-    reasons = []
-    
-    # A. ANALIZĂ TEHNICĂ (Mereu Disponibilă) - Max 50p
-    if tech_data:
-        # 1. Trend pe termen lung
-        if tech_data['Last_Close'] > tech_data['SMA_200']:
-            score += 15
-            reasons.append("Trend Ascendent (Peste media de 200 zile)")
+    if st.button("Intră în Aplicație"):
+        secret_access = st.secrets.get("ACCESS_PASSWORD", "1234") 
+        
+        if password_input == secret_access:
+            st.session_state['access_granted'] = True
+            st.rerun()
         else:
-            reasons.append("Trend Descendent (Sub media de 200 zile)")
-            
-        # 2. Momentum RSI
-        rsi = tech_data['RSI']
-        if 40 < rsi < 70:
-            score += 15
-            reasons.append("Momentum Sănătos (RSI Neutru)")
-        elif rsi <= 30:
-            score += 10
-            reasons.append("Posibil Oversold (RSI Mic - Oportunitate?)")
-            
-        # 3. Volatilitate (Risk)
-        daily_ret = history['Close'].pct_change()
-        vol = daily_ret.std() * np.sqrt(252)
-        if vol < 0.35: # Volatilitate sub 35%
-            score += 20
-            reasons.append("Volatilitate Controlată")
-        else:
-            score += 5
-            reasons.append("Volatilitate Ridicată")
+            st.error("⛔ Parolă de acces greșită.")
 
-    # B. ANALIZĂ FUNDAMENTALĂ (Dacă avem date) - Max 50p
-    # Dacă nu avem info, redistribuim punctele tehnic
-    has_fundamentals = 'trailingPE' in info or 'revenueGrowth' in info
-    
-    if has_fundamentals:
-        pe = info.get('trailingPE', 100)
-        if pe < 25: 
-            score += 15
-            reasons.append(f"Evaluare Bună (P/E {pe:.1f})")
-            
-        peg = info.get('pegRatio', 5)
-        if peg < 1.5:
-            score += 15
-            reasons.append(f"Creștere Ieftină (PEG {peg:.2f})")
-            
-        profit = info.get('profitMargins', 0)
-        if profit > 0.10:
-            score += 20
-            reasons.append(f"Companie Profitabilă (Marjă {profit*100:.0f}%)")
-    else:
-        # Mod de avarie: Dublăm punctajul tehnic pentru a umple golul
-        score = score * 2
-        reasons.append("⚠️ Scor bazat 100% pe Tehnic (Date fundamentale lipsă)")
+    return False
 
-    return min(score, 100), reasons
+if not check_access_password():
+    st.stop()
 
 # =========================================================
-# INTERFAȚĂ & STRUCTURĂ
+# AICI ÎNCEPE APLICAȚIA
 # =========================================================
 
-# --- CSS CUSTOM PENTRU UN LOOK PRO ---
+# --- CSS ---
 st.markdown("""
     <style>
-    .main { background-color: #0e1117; }
-    .stMetric { background-color: #1e2127; padding: 10px; border-radius: 5px; border: 1px solid #333; }
-    div[data-testid="stForm"] button { border: 1px solid #00FF00; color: #00FF00; background: transparent; }
-    div[data-testid="stForm"] button:hover { background: #00FF00; color: black; }
+    .main { background-color: #0e1117; color: #ffffff; }
+    div[data-testid="stForm"] button {
+        background-color: #00cc00 !important;
+        color: black !important;
+        font-weight: bold !important;
+        border: none !important;
+        width: 100%;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SIDEBAR & AUTH ---
-def check_access():
-    if st.session_state.get('access_granted', False): return True
-    st.sidebar.markdown("### 🔐 Login")
-    pwd = st.sidebar.text_input("Parola", type="password")
-    if st.sidebar.button("Login"):
-        if pwd == st.secrets.get("ACCESS_PASSWORD", "1234"):
-            st.session_state['access_granted'] = True
-            st.rerun()
-    return False
+# --- SISTEM SALVARE (JSON) ---
+DB_FILE = "prime_favorites.json"
 
-if not check_access():
-    st.title("🔒 Terminal Blocat")
-    st.stop()
+def load_db():
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {"favorites": [], "names": {}}
+    return {"favorites": [], "names": {}}
 
-# --- DATABASE FAVORITE ---
-if 'favorites' not in st.session_state: st.session_state.favorites = ["NVDA", "TSLA", "AAPL"]
-if 'active_ticker' not in st.session_state: st.session_state.active_ticker = "NVDA"
+def save_db(fav_list, fav_names):
+    with open(DB_FILE, "w") as f:
+        json.dump({"favorites": fav_list, "names": fav_names}, f)
 
-st.sidebar.title("NAVIGARE")
-with st.sidebar.form("search"):
-    t_input = st.text_input("Caută Simbol", value="")
-    if st.form_submit_button("🔍 Caută") and t_input:
-        st.session_state.active_ticker = t_input.upper()
+# --- INIȚIALIZARE STATE ---
+if 'db_loaded' not in st.session_state:
+    data = load_db()
+    st.session_state.favorites = data.get("favorites", [])
+    st.session_state.favorite_names = data.get("names", {})
+    st.session_state.db_loaded = True
+
+if 'active_ticker' not in st.session_state: 
+    st.session_state.active_ticker = "NVDA"
+
+# --- FUNCȚII UTILITARE & CALCUL ---
+
+def calculate_rsi(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+# --- FUNCȚIA REPARATĂ (ROBUSTĂ) ---
+@st.cache_data(ttl=60, show_spinner=False)
+def download_safe_data(ticker, period):
+    # Această parte descarcă datele grele și le ține minte 60 secunde
+    # REPARATIE: Separăm istoric de info. Dacă info crapă, istoricul rămâne.
+    stock = yf.Ticker(ticker)
+    
+    # 1. Istoric (Critic)
+    try:
+        h = stock.history(period=period)
+    except:
+        h = pd.DataFrame()
+
+    # 2. Info (Opțional dar important)
+    try:
+        i = stock.info
+    except:
+        i = {}
+        
+    return h, i
+
+def get_stock_data(ticker, period="5y"):
+    # Aceasta este funcția principală care leagă totul
+    try:
+        # 1. Recreăm obiectul rapid (pentru știri/calendar)
+        stock = yf.Ticker(ticker)
+        
+        # 2. Luăm datele grele din "seif" (cache) sau le descărcăm dacă au trecut 60s
+        history, info = download_safe_data(ticker, period)
+        
+        if history is None or history.empty:
+            return None, None, None
+            
+        return stock, history, info
+    except:
+        return None, None, None
+
+def calculate_risk_metrics(history):
+    if history.empty: return 0, 0, 0
+    
+    daily_ret = history['Close'].pct_change().dropna()
+    
+    # 1. Volatilitate
+    volatility = daily_ret.std() * np.sqrt(252) * 100
+    
+    # 2. Max Drawdown
+    max_dd = ((history['Close'] / history['Close'].cummax()) - 1).min() * 100
+    
+    # 3. Sharpe Ratio
+    risk_free_rate = 0.04
+    mean_return = daily_ret.mean() * 252
+    std_dev = daily_ret.std() * np.sqrt(252)
+    
+    if std_dev == 0: sharpe = 0
+    else: sharpe = (mean_return - risk_free_rate) / std_dev
+    
+    return volatility, max_dd, sharpe
+
+def calculate_prime_score(info, history):
+    score = 0
+    reasons = []
+    
+    if not info: info = {} # Protectie daca info e gol
+    
+    # 1. TREND
+    if not history.empty:
+        if len(history) > 200:
+            sma = history['Close'].rolling(window=200).mean().iloc[-1]
+            trend_name = "SMA200"
+        else:
+            sma = history['Close'].mean()
+            trend_name = "Media Perioadei"
+            
+        current = history['Close'].iloc[-1]
+        if current > sma:
+            score += 20
+            reasons.append(f"Trend Ascendent (Peste {trend_name})")
+
+    # 2. EVALUARE
+    peg = info.get('pegRatio')
+    if peg is not None and 0 < peg < 2.0:
+        score += 20
+        reasons.append(f"Preț Bun pt Creștere (PEG: {peg:.2f})")
+    elif info.get('trailingPE', 100) < 25: 
+        score += 10
+        reasons.append("P/E Decent (<25)")
+
+    # 3. EFICIENȚĂ
+    roe = info.get('returnOnEquity', 0) or 0
+    if roe > 0.15:
+        score += 20
+        reasons.append(f"Management Eficient (ROE: {roe*100:.1f}%)")
+
+    # 4. CREȘTERE
+    rg = info.get('revenueGrowth', 0) or 0
+    if rg > 0.10: 
+        score += 20
+        reasons.append(f"Creștere Venituri: {rg*100:.1f}%")
+
+    # 5. SIGURANȚĂ
+    fcf = info.get('freeCashflow')
+    if fcf is not None and fcf > 0:
+        score += 20
+        reasons.append("Generează Cash (FCF Pozitiv)")
+    elif (info.get('totalCash', 0) > info.get('totalDebt', 0)):
+        score += 20
+        reasons.append("Bilanț Solid (Cash > Datorii)")
+
+    return score, reasons
+
+def get_news_sentiment(stock):
+    try:
+        news = stock.news
+        headlines = []
+        if news:
+            for n in news[:5]:
+                t = n.get('title', '')
+                if t and t not in headlines: headlines.append(t)
+        if not headlines: return "Neutru", ["Fara stiri recente."]
+        pos = ['beat', 'rise', 'jump', 'buy', 'growth', 'strong', 'record', 'profit']
+        neg = ['miss', 'fall', 'drop', 'sell', 'weak', 'loss', 'crash', 'risk']
+        val = 0
+        for h in headlines:
+            if any(x in h.lower() for x in pos): val += 1
+            if any(x in h.lower() for x in neg): val -= 1
+        sent = "Pozitiv 🟢" if val > 0 else "Negativ 🔴" if val < 0 else "Neutru ⚪"
+        return sent, headlines
+    except:
+        return "Indisponibil", []
+
+# --- FUNCȚIE CURĂȚARE TEXT ---
+def clean_text_for_pdf(text):
+    """Transformă diacriticele în caractere simple pentru a nu crăpa PDF-ul."""
+    if text is None: return ""
+    text = str(text)
+    replacements = {
+        'ă': 'a', 'â': 'a', 'î': 'i', 'ș': 's', 'ț': 't',
+        'Ă': 'A', 'Â': 'A', 'Î': 'I', 'Ș': 'S', 'Ț': 'T',
+        '🔴': '[RISC]', '🟢': '[BUN]', '🟡': '[NEUTRU]', '⚪': '-',
+        '💎': '[GEM]', '🛡️': '[SCUT]', '📈': '[UP]', '📉': '[DOWN]'
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    
+    # Eliminăm orice alt caracter ciudat care nu e latin-1
+    return text.encode('latin-1', 'ignore').decode('latin-1')
+
+# --- GENERATORUL DE RAPORT COMPLEX ---
+def create_extended_pdf(ticker, full_name, price, score, reasons, verdict, risk, info, rsi_val):
+    if not info: info = {}
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    
+    # --- PAGINA 1: REZUMAT ---
+    pdf.add_page()
+    
+    # Titlu
+    pdf.set_font("Arial", 'B', 24)
+    pdf.cell(0, 20, f"RAPORT DE ANALIZA: {clean_text_for_pdf(ticker)}", ln=True, align='C')
+    
+    pdf.set_font("Arial", '', 10)
+    pdf.cell(0, 10, f"Generat automat de PRIME Terminal | Data: {datetime.now().strftime('%Y-%m-%d')}", ln=True, align='C')
+    pdf.ln(10)
+
+    # 1. SCOR ȘI VERDICT
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 12, "1. VERDICT GENERAL", ln=True, fill=True)
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(50, 10, f"SCOR PRIME: {score}/100", ln=False)
+    pdf.cell(0, 10, f"CALIFICATIV: {clean_text_for_pdf(verdict)}", ln=True)
+    
+    pdf.set_font("Arial", '', 11)
+    pdf.ln(5)
+    pdf.multi_cell(0, 6, clean_text_for_pdf(
+        f"Compania {full_name} se tranzactioneaza la pretul de ${price:.2f}. "
+        f"Pe baza algoritmului nostru, aceasta prezinta un profil de risc cu volatilitate anuala de {risk['vol']:.1f}% "
+        f"si un Sharpe Ratio de {risk.get('sharpe', 0):.2f} (un numar mai mare de 1 indica un randament bun ajustat la risc)."
+    ))
+
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 10, "PUNCTE CHEIE (PRO/CONTRA)", ln=True)
+    pdf.set_font("Arial", '', 11)
+    
+    if reasons:
+        for r in reasons:
+            pdf.cell(5, 8, "-", ln=False)
+            pdf.multi_cell(0, 8, clean_text_for_pdf(r))
+    else:
+        pdf.cell(0, 8, "Nu au fost identificate semnale majore automate.", ln=True)
+
+    # --- PAGINA 2: ANALIZA FUNDAMENTALĂ DETALIATĂ ---
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 12, "2. ANALIZA FUNDAMENTALA DETALIATA", ln=True, fill=True)
+    pdf.ln(5)
+
+    # A. EVALUARE (VALUATION)
+    pe = info.get('trailingPE')
+    peg = info.get('pegRatio')
+    pb = info.get('priceToBook')
+    
+    # Interpretare Textuala Evaluare
+    interp_val = "Date insuficiente."
+    if pe:
+        if pe < 15: interp_val = "Compania este considerata ieftina (Sub-evaluata)."
+        elif pe < 30: interp_val = "Evaluarea este corecta (Fair Value)."
+        else: interp_val = "Pretul include asteptari mari de crestere (Supra-evaluata)."
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, f"A. Evaluare (Cat platesti?): {clean_text_for_pdf(interp_val)}", ln=True)
+    pdf.set_font("Arial", '', 11)
+    
+    col_w = 60
+    pdf.cell(col_w, 8, f"P/E Ratio: {pe if pe else 'N/A'}", border=1)
+    pdf.cell(col_w, 8, f"PEG Ratio: {peg if peg else 'N/A'}", border=1)
+    pdf.cell(col_w, 8, f"P/Book: {pb if pb else 'N/A'}", border=1, ln=True)
+    pdf.ln(5)
+
+    # B. PROFITABILITATE
+    mg = info.get('profitMargins', 0)
+    roe = info.get('returnOnEquity', 0)
+    
+    # Interpretare Textuala Profit
+    interp_prof = "Compania are probleme de profitabilitate."
+    if mg is not None:
+        if mg > 0.15: interp_prof = "Compania este o masina de bani (Marje foarte bune)."
+        elif mg > 0.05: interp_prof = "Profitabilitate stabila si normala."
+    else:
+        mg = 0
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, f"B. Profitabilitate: {clean_text_for_pdf(interp_prof)}", ln=True)
+    pdf.set_font("Arial", '', 11)
+    
+    pdf.cell(col_w, 8, f"Marja Profit: {mg*100:.1f}%", border=1)
+    pdf.cell(col_w, 8, f"ROE (Randament): {roe*100:.1f}%", border=1)
+    pdf.cell(col_w, 8, f"Revenue Growth: {info.get('revenueGrowth', 0)*100:.1f}%", border=1, ln=True)
+    pdf.ln(5)
+
+    # C. BILANT SI DATORII
+    cash = info.get('totalCash', 0)
+    debt = info.get('totalDebt', 0)
+    current_ratio = info.get('currentRatio', 0)
+    
+    interp_health = "Situatie financiara riscanta."
+    if cash is None: cash = 0
+    if debt is None: debt = 0
+    if current_ratio is None: current_ratio = 0
+
+    if cash > debt: interp_health = "Bilant FORTAREATA (Mai multi bani decat datorii)."
+    elif current_ratio > 1.5: interp_health = "Stabilitate buna pe termen scurt."
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, f"C. Sanatate Financiara: {clean_text_for_pdf(interp_health)}", ln=True)
+    pdf.set_font("Arial", '', 11)
+    
+    pdf.cell(col_w, 8, f"Cash Total: ${cash/1e9:.1f}B", border=1)
+    pdf.cell(col_w, 8, f"Datorie Totala: ${debt/1e9:.1f}B", border=1)
+    pdf.cell(col_w, 8, f"Lichiditate (Curr): {current_ratio:.2f}", border=1, ln=True)
+
+    # --- PAGINA 3: TEHNIC, DIVIDENDE SI DISCLAIMER ---
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 12, "3. ANALIZA TEHNICA & DIVIDENDE", ln=True, fill=True)
+    pdf.ln(5)
+
+    # RSI
+    interp_rsi = "Momentum Neutru."
+    if rsi_val > 70: interp_rsi = "Supra-cumparat (Posibila corectie)."
+    elif rsi_val < 30: interp_rsi = "Supra-vandut (Posibila revenire)."
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, f"Indicator RSI (14 zile): {rsi_val:.2f} -> {clean_text_for_pdf(interp_rsi)}", ln=True)
+    
+    # Dividende
+    div_yield = info.get('dividendYield', 0)
+    if div_yield and div_yield < 1: div_yield = div_yield * 100 # Corectie
+    
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, "Politica de Dividende:", ln=True)
+    pdf.set_font("Arial", '', 11)
+    if div_yield and div_yield > 0:
+        pdf.multi_cell(0, 6, clean_text_for_pdf(
+            f"Compania plateste dividende. Randamentul anual curent este de {div_yield:.2f}%. "
+            f"Rata de plata (Payout Ratio) este de {info.get('payoutRatio', 0)*100:.1f}%, ceea ce indica cat din profit se intoarce la investitori."
+        ))
+    else:
+        pdf.multi_cell(0, 6, "Compania NU plateste dividende in prezent. Profitul este reinvestit.")
+
+    # TABEL DATE BRUTE SUPLIMENTARE
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 8, "Alte Date Relevante (Snapshot):", ln=True)
+    pdf.set_font("Arial", '', 10)
+    
+    extra_data = [
+        ("Sector", info.get('sector', 'N/A')),
+        ("Industrie", info.get('industry', 'N/A')),
+        ("Angajati", info.get('fullTimeEmployees', 'N/A')),
+        ("Target Pret Analisti", f"${info.get('targetMeanPrice', 'N/A')}"),
+        ("Beta (Volatilitate vs Piata)", f"{info.get('beta', 'N/A')}")
+    ]
+    
+    for label, val in extra_data:
+        pdf.cell(60, 6, clean_text_for_pdf(label), border=1)
+        pdf.cell(0, 6, clean_text_for_pdf(str(val)), border=1, ln=True)
+
+    # DISCLAIMER FINAL
+    pdf.ln(20)
+    pdf.set_font("Arial", 'I', 8)
+    pdf.multi_cell(0, 5, clean_text_for_pdf(
+        "DISCLAIMER: Acest raport este generat automat de un algoritm software si are scop pur informativ. "
+        "Nu reprezinta un sfat financiar, juridic sau fiscal. Performantele trecute nu garanteaza rezultate viitoare. "
+        "Consultati un specialist inainte de a investi."
+    ))
+
+    return pdf.output(dest='S').encode('latin-1', 'ignore')
+
+# --- SIDEBAR (SEARCH) ---
+st.sidebar.title(f"🔍 {st.session_state.active_ticker}")
+st.sidebar.write("Căutare Nouă:")
+
+with st.sidebar.form(key='search_form'):
+    c_in, c_btn = st.columns([0.7, 0.3])
+    with c_in:
+        search_val = st.text_input("Simbol", placeholder="TSLA", label_visibility="collapsed")
+    with c_btn:
+        submit_button = st.form_submit_button(label='GO')
+    if submit_button and search_val:
+        st.session_state.active_ticker = search_val.upper()
         st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⭐ Favorite")
-for fav in st.session_state.favorites:
-    c1, c2 = st.sidebar.columns([3,1])
-    if c1.button(fav, key=f"go_{fav}"):
-        st.session_state.active_ticker = fav
-        st.rerun()
-    if c2.button("X", key=f"del_{fav}"):
-        st.session_state.favorites.remove(fav)
-        st.rerun()
 
-add_fav = st.sidebar.button("➕ Adaugă curent la Favorite")
-if add_fav and st.session_state.active_ticker not in st.session_state.favorites:
-    st.session_state.favorites.append(st.session_state.active_ticker)
+# ZONA ADMIN SIDEBAR
+st.sidebar.caption("🔧 Zonă Administrator")
+admin_input = st.sidebar.text_input("Parola Editare", type="password", placeholder="Pentru a modifica lista...")
+secret_admin_key = st.secrets.get("ADMIN_PASSWORD", "admin_secret")
+IS_ADMIN = (admin_input == secret_admin_key)
+
+if IS_ADMIN:
+    st.sidebar.success("✅ Mod Editare Activ")
+    if st.sidebar.button("➕ Adaugă la Favorite"):
+        ticker_to_add = st.session_state.active_ticker
+        if ticker_to_add not in st.session_state.favorites:
+            try:
+                t_info = yf.Ticker(ticker_to_add).info
+                long_name = t_info.get('longName', ticker_to_add)
+                st.session_state.favorites.append(ticker_to_add)
+                st.session_state.favorite_names[ticker_to_add] = long_name
+                save_db(st.session_state.favorites, st.session_state.favorite_names)
+                st.sidebar.success("Salvat!")
+                st.rerun()
+            except Exception: st.sidebar.error("Eroare!")
+else:
+    if st.session_state.active_ticker not in st.session_state.favorites:
+        st.sidebar.info("🔒 Loghează-te ca Admin pentru a adăuga.")
+
+st.sidebar.subheader("Lista Mea")
+if st.session_state.favorites:
+    for fav in st.session_state.favorites:
+        full_n = st.session_state.favorite_names.get(fav, fav)
+        if IS_ADMIN:
+            c1, c2 = st.sidebar.columns([4, 1])
+        else:
+            c1 = st.sidebar 
+        
+        def set_fav(f=fav): st.session_state.active_ticker = f
+        def del_fav(f=fav): 
+            st.session_state.favorites.remove(f)
+            save_db(st.session_state.favorites, st.session_state.favorite_names)
+
+        if IS_ADMIN:
+            c1.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
+            c2.button("X", key=f"del_{fav}", on_click=del_fav) 
+        else:
+            st.sidebar.button(f"{fav}", key=f"btn_{fav}", on_click=set_fav, help=full_n)
+else:
+    st.sidebar.info("Lista este goală.")
+
+st.sidebar.markdown("---")
+if st.sidebar.button("🔒 Logout Site"):
+    st.session_state['access_granted'] = False
     st.rerun()
 
-# --- MAIN APP ---
-ticker = st.session_state.active_ticker
-st.title(f"📊 Analiză: {ticker}")
+# --- MAIN APP (PUBLIC DUPA ACCES) ---
+temp_stock = yf.Ticker(st.session_state.active_ticker)
+try: temp_name = temp_stock.info.get('longName', st.session_state.active_ticker)
+except: temp_name = st.session_state.active_ticker
 
-# FETCH DATA
-history, info = get_robust_data(ticker)
+st.title(f"🛡️ {st.session_state.active_ticker}")
+st.caption(f"{temp_name}")
 
-if history.empty:
-    st.error(f"Nu s-au găsit date pentru {ticker}. Verifică simbolul.")
-else:
-    # PREPARARE DATE
-    tech = calculate_technicals(history)
-    current_price = tech['Last_Close']
-    score, reasons = calculate_prime_score(info, tech, history)
-    
-    # HEADER METRICS
-    m1, m2, m3, m4 = st.columns(4)
-    price_delta = history['Close'].iloc[-1] - history['Close'].iloc[-2]
-    m1.metric("Preț Curent", f"${current_price:.2f}", f"{price_delta:.2f}")
-    
-    verdict_color = "🟢" if score > 70 else "🟡" if score > 50 else "🔴"
-    m2.metric("Scor PRIME", f"{score}/100", verdict_color)
-    
-    rsi_val = tech['RSI']
-    m3.metric("RSI (14)", f"{rsi_val:.2f}", "Supra-cumpărat" if rsi_val > 70 else "Supra-vândut" if rsi_val < 30 else "Neutru", delta_color="off")
-    
-    mcap = info.get('marketCap', 0)
-    m4.metric("Market Cap", f"${mcap/1e9:.1f} B" if mcap else "N/A")
+optiuni_ani = ['1mo', '3mo', '6mo', '1y', '2y', '3y', '5y', 'max']
+perioada = st.select_slider("Perioada:", options=optiuni_ani, value='1y')
 
-    # TABS
-    tab1, tab2, tab3 = st.tabs(["📈 Grafic & Tehnic", "📋 Raport Detaliat", "💰 Dividende"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📊 Analiză", "📈 Tehnic", "📅 Calendar", "📰 Știri", "💰 Dividende", "📋 Audit (PDF)", "⚔️ Vs"
+])
+
+stock, history, info = get_stock_data(st.session_state.active_ticker, period=perioada)
+
+if stock is not None and history is not None and not history.empty:
+    curr_price = history['Close'].iloc[-1]
     
+    volatility, max_dd, sharpe = calculate_risk_metrics(history)
+    score, reasons = calculate_prime_score(info, history)
+    
+    if max_dd < -50: verdict = "Prăbușire Istorică 🔴"; style = "error"
+    elif sharpe > 1.0 and score > 70: verdict = "💎 GEM (Oportunitate)"; style = "success"
+    elif score > 60: verdict = "Solid 🟢"; style = "success"
+    else: verdict = "Neutru / Riscant 🟡"; style = "warning"
+
     with tab1:
-        # GRAFIC CANDLESTICK CU MEDII MOBILE
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=history.index, open=history['Open'], high=history['High'], low=history['Low'], close=history['Close'], name='Preț'))
-        fig.add_trace(go.Scatter(x=history.index, y=history['Close'].rolling(50).mean(), line=dict(color='orange', width=1), name='SMA 50'))
-        fig.add_trace(go.Scatter(x=history.index, y=history['Close'].rolling(200).mean(), line=dict(color='blue', width=1), name='SMA 200'))
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Preț", f"${curr_price:.2f}")
+        c2.metric("Scor PRIME", f"{score}/100")
+        c3.metric("Risc (Vol)", f"{volatility:.1f}%")
+        c4.metric("Sharpe Ratio", f"{sharpe:.2f}")
         
-        fig.update_layout(height=500, template="plotly_dark", title=f"Evoluție {ticker} (1 An)", xaxis_rangeslider_visible=False)
+        if style == "success": st.success(verdict)
+        elif style == "warning": st.warning(verdict)
+        else: st.error(verdict)
+        
+        fig = go.Figure(data=[go.Candlestick(
+            x=history.index,
+            open=history['Open'],
+            high=history['High'],
+            low=history['Low'],
+            close=history['Close'],
+            name=st.session_state.active_ticker
+        )])
+        fig.update_layout(
+            yaxis_title='Preț ($)',
+            xaxis_rangeslider_visible=False,
+            template="plotly_dark",
+            height=500,
+            margin=dict(l=0, r=0, t=20, b=0)
+        )
         st.plotly_chart(fig, use_container_width=True)
-        
-        # EXPLICATII SCOR
-        st.markdown("### 🧠 De ce acest scor?")
-        c_reasons = st.container()
-        for r in reasons:
-            c_reasons.info(r)
 
-    with tab2:
-        # TABEL DATE
-        c_left, c_right = st.columns(2)
-        
-        with c_left:
-            st.subheader("Date Fundamentale")
-            df_fund = pd.DataFrame({
-                "Indicator": ["P/E Ratio", "PEG Ratio", "Profit Margin", "Revenue Growth"],
-                "Valoare": [
-                    info.get('trailingPE', 'N/A'),
-                    info.get('pegRatio', 'N/A'),
-                    f"{info.get('profitMargins', 0)*100:.1f}%" if info.get('profitMargins') else 'N/A',
-                    f"{info.get('revenueGrowth', 0)*100:.1f}%" if info.get('revenueGrowth') else 'N/A'
-                ]
-            })
-            st.table(df_fund)
-            
-        with c_right:
-            st.subheader("Date Tehnice")
-            df_tech = pd.DataFrame({
-                "Indicator": ["SMA 50 (Termen Mediu)", "SMA 200 (Termen Lung)", "Volatilitate Anuală", "Maxim 52 Săptămâni"],
-                "Valoare": [
-                    f"${tech['SMA_50']:.2f}",
-                    f"${tech['SMA_200']:.2f}",
-                    f"{history['Close'].pct_change().std()*np.sqrt(252)*100:.1f}%",
-                    f"${history['High'].max():.2f}"
-                ]
-            })
-            st.table(df_tech)
-
-        # PDF GENERATION
-        if st.button("📄 Descarcă Raport PDF"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", 'B', 16)
-            pdf.cell(40, 10, f"Raport Analiza: {ticker}")
-            pdf.ln(20)
-            pdf.set_font("Arial", '', 12)
-            pdf.cell(40, 10, f"Pret: ${current_price:.2f} | Scor: {score}/100")
-            pdf.ln(10)
-            for r in reasons:
-                # Curățare caractere speciale pentru PDF standard
-                clean_r = r.replace("ă","a").replace("â","a").replace("ș","s").replace("ț","t").replace("î","i")
-                pdf.cell(0, 10, f"- {clean_r}", ln=True)
-                
-            html = base64.b64encode(pdf.output(dest='S').encode('latin-1', 'ignore')).decode()
-            st.markdown(f'<a href="data:application/pdf;base64,{html}" download="{ticker}_Report.pdf">⬇️ Click Aici</a>', unsafe_allow_html=True)
+    with tab2: 
+        st.subheader("RSI Momentum")
+        rsi_val = calculate_rsi(history['Close']).iloc[-1]
+        st.metric("RSI (14)", f"{rsi_val:.2f}")
+        if rsi_val > 70: st.warning("Supra-cumparat (>70)")
+        elif rsi_val < 30: st.success("Supra-vandut (<30)")
+        st.markdown("---")
+        st.subheader("Insider Trading")
+        try:
+            ins = stock.insider_transactions
+            if ins is not None and not ins.empty: st.dataframe(ins.head(10)[['Start Date', 'Insider', 'Shares', 'Text']])
+            else: st.info("Fara date insideri.")
+        except: st.info("Indisponibil.")
 
     with tab3:
-        st.subheader("Calculator Venit Pasiv")
-        div_yield = info.get('dividendYield', 0)
+        try:
+            cal = stock.calendar
+            if cal is not None and not cal.empty: st.dataframe(cal)
+            else: st.write("Fara date calendar.")
+        except: st.error("Eroare.")
+
+    with tab4:
+        s, heads = get_news_sentiment(stock)
+        st.write(f"Sentiment: **{s}**")
+        for h in heads: st.markdown(f"- {h}")
+
+    with tab5:
+        st.subheader("💰 Dividende & Venit Pasiv")
         
-        if div_yield and div_yield > 0:
-            st.success(f"Acest activ plătește dividende! Randament: {div_yield*100:.2f}%")
-            invest = st.number_input("Suma Investită ($)", 1000, 1000000, 5000)
-            st.metric("Venit Anual Estimat", f"${invest * div_yield:.2f}")
-            st.metric("Venit Trimestrial", f"${(invest * div_yield)/4:.2f}")
+        # 1. PRELUARE DATE AUTOMATE
+        div_rate = info.get('dividendRate', 0)
+        div_yield_raw = info.get('dividendYield', 0)
+        
+        # Dacă lipsește yield-ul dat de Yahoo, îl calculăm noi brut
+        if (div_yield_raw is None or div_yield_raw == 0) and (div_rate and div_rate > 0):
+             div_yield_raw = div_rate / curr_price
+
+        # Standardizare: Yahoo dă de obicei 0.05 pentru 5%. Noi vrem procentul (5.0).
+        if div_yield_raw is None: 
+            auto_yield = 0.0
         else:
-            st.warning("Această companie NU plătește dividende sau datele lipsesc.")
-            st.info("Companiile de tehnologie (growth) reinvestesc profitul în loc să dea dividende.")
+            auto_yield = div_yield_raw * 100
+
+        # 2. ZONA DE CONTROL MANUAL
+        col_info, col_edit = st.columns([2, 1])
+        
+        with col_info:
+            # Afișăm ce a găsit sistemul
+            st.write(f"Yield detectat automat: **{auto_yield:.2f}%**")
+            st.caption(f"Plată anuală (est): ${div_rate if div_rate else 0}")
+
+        with col_edit:
+            # Aici e soluția ta: BUTONUL DE MODIFICARE
+            override = st.checkbox("✏️ Corectează Manual")
+        
+        if override:
+            # Dacă bifezi, tu decizi cât e randamentul
+            final_yield = st.number_input("Introdu Randamentul Corect (%):", value=float(auto_yield), step=0.1, format="%.2f")
+            st.success(f"Folosim randamentul manual: {final_yield}%")
+        else:
+            # Dacă nu bifezi, mergem pe mâna robotului
+            final_yield = auto_yield
+
+        st.markdown("---")
+
+        # 3. CALCULATOR VENIT PASIV (Folosește final_yield)
+        if final_yield > 0:
+            st.subheader("🧮 Calculator Venit Pasiv")
+            st.write("Câți bani vrei să investești?")
+            
+            inv = st.number_input("Suma Investită ($)", min_value=1.0, value=1000.0, step=100.0, key="inv_calc")
+            
+            # Calcul matematic: (Suma * Procent) / 100
+            venit_anual = inv * (final_yield / 100)
+            venit_lunar = venit_anual / 12
+            
+            # Afișare rezultate
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Investiție", f"${inv:,.0f}")
+            c2.metric("Venit Lunar", f"${venit_lunar:.2f}")
+            c3.metric("Venit Anual", f"${venit_anual:.2f}")
+            
+            # Proiecție pe 10 ani (fără reinvestire, simplu)
+            st.progress(min(int(final_yield * 2), 100)) # O bară vizuală pentru cât de mare e yield-ul
+            st.caption(f"La un randament de {final_yield}%, îți recuperezi investiția din dividende în aproximativ {100/final_yield:.1f} ani (fără creșterea prețului).")
+            
+        else:
+            st.info("Această companie nu pare să plătească dividende (0%). Dacă greșesc, bifează 'Corectează Manual' sus.")
+
+    with tab6:
+        st.write("Genereaza un raport complet.")
+        if st.button("📄 Descarca Raport Complet"):
+            try:
+                curr_rsi = calculate_rsi(history['Close']).iloc[-1]
+                risk_data = {'vol': volatility, 'dd': max_dd, 'sharpe': sharpe}
+                
+                pdf_bytes = create_extended_pdf(
+                    ticker=st.session_state.active_ticker,
+                    full_name=temp_name,
+                    price=curr_price,
+                    score=score,
+                    reasons=reasons,
+                    verdict=verdict,
+                    risk=risk_data,
+                    info=info,
+                    rsi_val=curr_rsi
+                )
+                b64 = base64.b64encode(pdf_bytes).decode()
+                href = f'<a href="data:application/octet-stream;base64,{b64}" download="Raport_Audit_{st.session_state.active_ticker}.pdf">📥 Descarca PDF</a>'
+                st.markdown(href, unsafe_allow_html=True)
+            except Exception as e: 
+                st.error(f"Eroare generare PDF: {str(e)}")
+
+    with tab7:
+        if len(st.session_state.favorites) >= 2:
+            st.subheader("🏁 Cursa Prețului (1 An)")
+            sel = st.multiselect("Alege companii:", st.session_state.favorites, default=st.session_state.favorites[:2])
+            
+            if sel:
+                df_chart = pd.DataFrame()
+                comp_data = [] 
+                
+                for t in sel:
+                    try:
+                        s_tmp = yf.Ticker(t)
+                        h = s_tmp.history(period="1y")['Close']
+                        i = s_tmp.info
+                        
+                        if not h.empty: df_chart[t] = (h/h.iloc[0]-1)*100
+                        
+                        comp_data.append({
+                            "Simbol": t,
+                            "Preț": i.get('currentPrice'),
+                            "P/E (Evaluare)": i.get('trailingPE'),
+                            "PEG (Creștere)": i.get('pegRatio'),
+                            "Marja Profit": f"{i.get('profitMargins', 0)*100:.1f}%",
+                            "Datorie/Cash": "🟢 Bun" if i.get('totalCash', 0) > i.get('totalDebt', 0) else "🔴 Risc"
+                        })
+                    except: pass
+                
+                st.line_chart(df_chart)
+                
+                st.markdown("---")
+                st.subheader("⚖️ Comparație Fundamentală")
+                if comp_data:
+                    df_table = pd.DataFrame(comp_data).set_index("Simbol")
+                    st.dataframe(df_table.style.highlight_max(axis=0, color='#004d00'), use_container_width=True)
+                    st.caption("*Verde închis indică valoarea cea mai mare din coloană.")
+        else:
+            st.info("Adaugă minim 2 companii la favorite pentru a activa comparația.")
+
+else:
+    st.error(f"Nu am găsit date pentru {st.session_state.active_ticker}. Verifică simbolul.")
