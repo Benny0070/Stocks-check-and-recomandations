@@ -1,8 +1,7 @@
 streamlit
 pandas
 numpy
-yfinance>=0.2.40
-plotly
 fpdf
-lxml
+plotly
+yfinance>=0.2.40
 requests
